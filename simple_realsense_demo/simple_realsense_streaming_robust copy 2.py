@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
 """
-ROBUST ULTRA-FAST RealSense Point Cloud Streaming Server for VR
-Enhanced with detailed latency analysis and robust error handling
-Streams 3D point cloud data to Unity VR applications
+ROBUST ULTRA-FAST RealSense D435 with Detailed Latency Analysis
+Fixed crash issues + comprehensive performance profiling
 """
 
 import numpy as np
 import pyrealsense2 as rs
 import cv2
 import time
-import socket
-import struct
-import pickle
-import threading
-from collections import deque
-import argparse
+import open3d as o3d
+from threading import Thread, Event
 import queue
+from collections import deque
 import signal
 import sys
-
 try:
     from numba import jit
     NUMBA_AVAILABLE = True
@@ -26,6 +21,7 @@ try:
 except ImportError:
     NUMBA_AVAILABLE = False
     print("⚠️  Numba not available, using optimized NumPy")
+
 
 if NUMBA_AVAILABLE:
     @jit(nopython=True, fastmath=True)
@@ -43,8 +39,8 @@ if NUMBA_AVAILABLE:
                     x = (i - ppx) * z / fx
                     y = (j - ppy) * z / fy
                     points[idx, 0] = x
-                    points[idx, 1] = -y  # Flip Y for VR
-                    points[idx, 2] = -z  # Flip Z for VR
+                    points[idx, 1] = -y  # Flip Y
+                    points[idx, 2] = -z  # Flip Z
                     valid_mask[idx] = True
                 else:
                     valid_mask[idx] = False
@@ -52,64 +48,37 @@ if NUMBA_AVAILABLE:
         
         return points, valid_mask
 
-class RobustPointCloudServer:
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
+
+class RobustUltraFastStreamer:
+    def __init__(self):
+        print("🚀 Initializing ROBUST ULTRA-FAST RealSense D435...")
         
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
         
-        print("🚀 Initializing RealSense D435 for VR Point Cloud streaming...")
-        
-        # Test RealSense detection first
-        try:
-            ctx = rs.context()
-            devices = ctx.query_devices()
-            if len(devices) == 0:
-                raise Exception("No RealSense devices found! Check USB 3.0 connection.")
-            
-            device = devices[0]
-            print(f"✅ Found: {device.get_info(rs.camera_info.name)}")
-            print(f"   Serial: {device.get_info(rs.camera_info.serial_number)}")
-            print(f"   Firmware: {device.get_info(rs.camera_info.firmware_version)}")
-        except Exception as e:
-            raise Exception(f"RealSense detection failed: {e}")
-        
-        # Pipeline setup with error handling
+        # Pipeline setup
         self.pipeline = rs.pipeline()
         self.config = rs.config()
         
-        # Start with conservative resolution that we know works
-        self.width = 640
+        # Optimized resolution
+        self.width = 848
         self.height = 480
         self.fps = 30
         
-        try:
-            self.config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
-            self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
-            
-            # Start pipeline with timeout
-            print(f"🔄 Starting pipeline at {self.width}x{self.height} @ {self.fps}fps...")
-            self.profile = self.pipeline.start(self.config)
-            print(f"✅ Pipeline started successfully!")
-            
-        except Exception as e:
-            raise Exception(f"Pipeline initialization failed: {e}")
+        self.config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
+        self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
+        
+        # Start pipeline
+        self.profile = self.pipeline.start(self.config)
+        print(f"✅ Streaming at {self.width}x{self.height} @ {self.fps}fps")
         
         # Camera parameters
-        try:
-            depth_sensor = self.profile.get_device().first_depth_sensor()
-            self.depth_scale = depth_sensor.get_depth_scale()
-            print(f"✅ Depth scale: {self.depth_scale}")
-            
-            color_profile = self.profile.get_stream(rs.stream.color)
-            self.intrinsics = color_profile.as_video_stream_profile().get_intrinsics()
-            print(f"✅ Camera intrinsics loaded")
-            
-        except Exception as e:
-            raise Exception(f"Camera parameter setup failed: {e}")
+        depth_sensor = self.profile.get_device().first_depth_sensor()
+        self.depth_scale = depth_sensor.get_depth_scale()
+        
+        color_profile = self.profile.get_stream(rs.stream.color)
+        self.intrinsics = color_profile.as_video_stream_profile().get_intrinsics()
         
         # Optimized filtering
         self.align = rs.align(rs.stream.color)
@@ -117,36 +86,29 @@ class RobustPointCloudServer:
         self.spatial.set_option(rs.option.filter_magnitude, 2)
         self.spatial.set_option(rs.option.filter_smooth_alpha, 0.4)
         
-        # Network setup with error handling
-        print(f"🌐 Setting up network server on {self.host}:{self.port}...")
-        try:
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind((self.host, self.port))
-            self.server_socket.listen(5)
-            print(f"✅ Network server ready on {self.host}:{self.port}")
-            
-        except OSError as e:
-            if e.errno == 10048:  # Port already in use
-                print(f"❌ Port {self.port} is already in use!")
-                print("💡 Try a different port or kill existing processes")
-                if hasattr(self, 'pipeline'):
-                    self.pipeline.stop()
-                raise Exception(f"Port {self.port} already in use")
-            else:
-                if hasattr(self, 'pipeline'):
-                    self.pipeline.stop()
-                raise Exception(f"Network setup failed: {e}")
-        
-        # Threading and queues
+        # Threading
         self.frame_queue = queue.Queue(maxsize=3)
-        self.running = threading.Event()
+        self.running = Event()
         self.running.set()
         self.shutdown_requested = False
         
-        # Performance settings for VR
-        self.max_points = 25000  # Optimized for VR performance
-        self.connected_clients = []
+        # Visualization with error handling
+        try:
+            self.vis = o3d.visualization.Visualizer()
+            self.vis.create_window("ROBUST Ultra-Fast RealSense Stream", width=1000, height=750)
+            
+            # Performance render settings
+            render_option = self.vis.get_render_option()
+            render_option.background_color = np.asarray([0.0, 0.0, 0.0])
+            render_option.point_size = 1.0
+            render_option.show_coordinate_frame = False
+            render_option.light_on = False
+            
+            self.pcd = o3d.geometry.PointCloud()
+            self.vis_available = True
+        except Exception as e:
+            print(f"⚠️  Visualization error: {e}, continuing without display")
+            self.vis_available = False
         
         # DETAILED LATENCY TRACKING
         self.latency_tracker = {
@@ -156,45 +118,24 @@ class RobustPointCloudServer:
             'numpy_conversion': deque(maxlen=100),
             'bgr_to_rgb': deque(maxlen=100),
             'point_cloud_creation': deque(maxlen=100),
-            'serialization': deque(maxlen=100),
-            'network_send': deque(maxlen=100),
+            'open3d_conversion': deque(maxlen=100),
+            'visualization_update': deque(maxlen=100),
             'total_frame_time': deque(maxlen=100)
         }
         
-        print(f"🎯 Point Cloud server listening on {self.host}:{self.port}")
-        print(f"📐 Max points per frame: {self.max_points}")
-        print(f"🔥 Mode: {'JIT' if NUMBA_AVAILABLE else 'Vectorized'}")
+        # Performance settings
+        self.max_points = 50000
         
-        # Test frame capture to ensure everything is working
-        print("🧪 Testing frame capture...")
-        try:
-            for i in range(3):
-                frames = self.pipeline.wait_for_frames(timeout_ms=1000)
-                depth_frame = frames.get_depth_frame()
-                color_frame = frames.get_color_frame()
-                
-                if depth_frame and color_frame:
-                    print(f"   Test frame {i+1}: ✅")
-                else:
-                    print(f"   Test frame {i+1}: ❌ Missing frames")
-                    
-            print("✅ Frame capture test passed!")
-            
-        except Exception as e:
-            if hasattr(self, 'pipeline'):
-                self.pipeline.stop()
-            if hasattr(self, 'server_socket'):
-                self.server_socket.close()
-            raise Exception(f"Frame capture test failed: {e}")
-        
+        print("🔥 ROBUST ULTRA-FAST setup complete!")
+    
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
         print(f"\\n📡 Received signal {signum}, shutting down gracefully...")
         self.shutdown_requested = True
         self.running.clear()
-        
-    def create_point_cloud_with_profiling(self, color_image, depth_image):
-        """Create point cloud with detailed latency profiling"""
+    
+    def _create_point_cloud_with_profiling(self, color_image, depth_image):
+        """Point cloud creation with detailed latency profiling"""
         total_start = time.perf_counter()
         
         # Step 1: Point cloud generation
@@ -225,16 +166,25 @@ class RobustPointCloudServer:
         pc_time = (time.perf_counter() - pc_start) * 1000
         self.latency_tracker['point_cloud_creation'].append(pc_time)
         
-        # Step 2: Downsampling for VR performance
+        # Step 2: Downsampling
         if len(valid_points) > self.max_points:
             step = len(valid_points) // self.max_points
             indices = np.arange(0, len(valid_points), step)[:self.max_points]
             valid_points = valid_points[indices]
             color_flat = color_flat[indices]
         
+        # Step 3: Open3D conversion
+        o3d_start = time.perf_counter()
+        pcd = o3d.geometry.PointCloud()
+        if len(valid_points) > 0:
+            pcd.points = o3d.utility.Vector3dVector(valid_points.astype(np.float64))
+            pcd.colors = o3d.utility.Vector3dVector(color_flat.astype(np.float64))
+        o3d_time = (time.perf_counter() - o3d_start) * 1000
+        self.latency_tracker['open3d_conversion'].append(o3d_time)
+        
         total_time = (time.perf_counter() - total_start) * 1000
         
-        return valid_points.astype(np.float32), color_flat.astype(np.float32), total_time
+        return pcd, total_time
     
     def _capture_frames_with_profiling(self):
         """Frame capture with detailed profiling"""
@@ -298,54 +248,79 @@ class RobustPointCloudServer:
                     print(f"⚠️  Capture error: {e}")
                 continue
     
-    def handle_client_with_profiling(self, conn, addr):
-        """Handle individual client connection with detailed profiling"""
-        print(f"🔗 VR Client connected: {addr}")
-        self.connected_clients.append(addr)
+    def start_streaming(self):
+        """Start robust streaming with detailed latency analysis"""
+        mode = "JIT + PROFILING" if NUMBA_AVAILABLE else "VECTORIZED + PROFILING"
+        print(f"\\n⚡ ROBUST {mode} MODE")
+        print(f"📐 Resolution: {self.width}x{self.height} @ {self.fps}fps")
+        print("🔍 Detailed latency profiling enabled")
+        print("\\nControls:")
+        print("  ESC/Q  - Quit")
+        print("  R      - Reset view")
+        print("  L      - Latency analysis report")
+        print("=" * 60)
+        
+        # Start capture thread
+        capture_thread = Thread(target=self._capture_frames_with_profiling, daemon=True)
+        capture_thread.start()
+        
+        # Setup visualization if available
+        if self.vis_available:
+            view_control = self.vis.get_view_control()
+            view_control.set_front([0.0, 0.0, -1.0])
+            view_control.set_lookat([0, 0, 1])
+            view_control.set_up([0, -1, 0])
+            view_control.set_zoom(0.8)
+        
+        geometry_added = False
+        frame_count = 0
+        start_time = time.time()
+        last_report_time = start_time
         
         try:
-            frame_count = 0
-            start_time = time.time()
-            last_report_time = start_time
-            
             while not self.shutdown_requested:
+                # Get frame
                 try:
-                    # Get frame from queue
                     color_rgb, depth_data, capture_timestamp = self.frame_queue.get(timeout=0.01)
                 except queue.Empty:
                     continue
                 
                 # Create point cloud with profiling
-                points, colors, processing_time = self.create_point_cloud_with_profiling(color_rgb, depth_data)
+                current_pcd, processing_time = self._create_point_cloud_with_profiling(color_rgb, depth_data)
                 
-                if len(points) == 0:
+                if len(current_pcd.points) == 0:
                     continue
                 
-                # Step 6: Serialize data into a simple binary format
-                serial_start = time.perf_counter()
-                
-                # Pack point count as a 4-byte unsigned integer
-                point_count = len(points)
-                header = struct.pack('<L', point_count)
-
-                # Convert numpy arrays to raw bytes
-                points_bytes = points.tobytes()
-                colors_bytes = colors.tobytes()
-                
-                serial_time = (time.perf_counter() - serial_start) * 1000
-                self.latency_tracker['serialization'].append(serial_time)
-
-                try:
-                    # Step 7: Network send profiling
-                    send_start = time.perf_counter()
-                    # Send header (point_count) + points data + colors data
-                    self.server_socket.sendall(header + points_bytes + colors_bytes)
-                    send_time = (time.perf_counter() - send_start) * 1000
-                    self.latency_tracker['network_send'].append(send_time)
+                # Visualization update with profiling
+                if self.vis_available:
+                    vis_start = time.perf_counter()
                     
-                except Exception as e:
-                    print(f"❌ Error sending to {addr}: {e}")
+                    self.pcd.points = current_pcd.points
+                    self.pcd.colors = current_pcd.colors
+                    
+                    if not geometry_added:
+                        self.vis.add_geometry(self.pcd)
+                        geometry_added = True
+                    else:
+                        self.vis.update_geometry(self.pcd)
+                    
+                    self.vis.poll_events()
+                    self.vis.update_renderer()
+                    
+                    vis_time = (time.perf_counter() - vis_start) * 1000
+                    self.latency_tracker['visualization_update'].append(vis_time)
+                
+                # Handle keyboard
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27 or key == ord('q'):
                     break
+                elif key == ord('r') and self.vis_available:
+                    view_control.set_front([0.0, 0.0, -1.0])
+                    view_control.set_lookat([0, 0, 1])
+                    view_control.set_up([0, -1, 0])
+                    view_control.set_zoom(0.8)
+                elif key == ord('l'):
+                    self._print_latency_analysis()
                 
                 # Performance monitoring
                 frame_count += 1
@@ -353,68 +328,34 @@ class RobustPointCloudServer:
                 
                 if current_time - last_report_time > 3.0:
                     fps = frame_count / (current_time - start_time)
-                    total_latency = (time.perf_counter() - capture_timestamp) * 1000
+                    point_count = len(self.pcd.points) if self.vis_available else len(current_pcd.points)
                     queue_size = self.frame_queue.qsize()
+                    
+                    # Calculate total latency
+                    total_latency = (time.perf_counter() - capture_timestamp) * 1000
                     
                     # Performance indicators
                     fps_icon = "🔥" if fps > 50 else "⚡" if fps > 30 else "🐌"
                     latency_icon = "🟢" if total_latency < 30 else "🟡" if total_latency < 50 else "🔴"
                     mode_icon = "🚀" if NUMBA_AVAILABLE else "💻"
                     
-                    print(f"📱 {addr[0]} | {fps_icon} {fps:.1f} FPS | {len(points):,} pts | "
+                    print(f"{fps_icon} {fps:.1f} FPS | {point_count:,} pts | "
                           f"{mode_icon} Proc: {processing_time:.1f}ms | {latency_icon} Total: {total_latency:.1f}ms | "
                           f"Q: {queue_size}")
                     
                     last_report_time = current_time
                 
-        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
-            print(f"📱 VR Client {addr} disconnected")
-        except Exception as e:
-            print(f"❌ Error handling VR client {addr}: {e}")
-        finally:
-            conn.close()
-            if addr in self.connected_clients:
-                self.connected_clients.remove(addr)
-    
-    def start_streaming(self):
-        """Start the robust point cloud streaming server"""
-        mode = "JIT + PROFILING" if NUMBA_AVAILABLE else "VECTORIZED + PROFILING"
-        print(f"\\n⚡ ROBUST POINT CLOUD {mode} MODE")
-        print(f"📐 Resolution: {self.width}x{self.height} @ {self.fps}fps")
-        print(f"🎯 Max points per frame: {self.max_points}")
-        print("� Detailed latency profiling enabled")
-        print("\\nControls:")
-        print("  Ctrl+C - Quit")
-        print("  Connect Unity VR client to receive point clouds")
-        print("=" * 60)
-        
-        # Start capture thread
-        capture_thread = threading.Thread(target=self._capture_frames_with_profiling, daemon=True)
-        capture_thread.start()
-        
-        try:
-            while not self.shutdown_requested:
-                conn, addr = self.server_socket.accept()
-                
-                # Handle each VR client in a separate thread
-                client_thread = threading.Thread(
-                    target=self.handle_client_with_profiling, 
-                    args=(conn, addr), 
-                    daemon=True
-                )
-                client_thread.start()
-                
         except KeyboardInterrupt:
-            print("\\n👋 VR Point Cloud server stopped by user")
+            print("\\n👋 Robust streaming stopped by user")
         except Exception as e:
-            print(f"❌ Server error: {e}")
+            print(f"❌ Error during streaming: {e}")
         finally:
             self.cleanup()
     
     def _print_latency_analysis(self):
         """Print detailed latency breakdown analysis"""
         print("\\n" + "="*70)
-        print("🔍 VR POINT CLOUD LATENCY ANALYSIS")
+        print("🔍 DETAILED LATENCY ANALYSIS")
         print("="*70)
         
         total_time = 0
@@ -454,7 +395,7 @@ class RobustPointCloudServer:
     
     def cleanup(self):
         """Robust cleanup with error handling"""
-        print("🧹 Starting VR Point Cloud server cleanup...")
+        print("🧹 Starting robust cleanup...")
         self.shutdown_requested = True
         self.running.clear()
         
@@ -462,41 +403,38 @@ class RobustPointCloudServer:
             # Stop pipeline
             if hasattr(self, 'pipeline'):
                 self.pipeline.stop()
-                print("✅ RealSense pipeline stopped")
+                print("✅ Pipeline stopped")
         except Exception as e:
             print(f"⚠️  Pipeline cleanup error: {e}")
         
         try:
-            # Close server socket
-            if hasattr(self, 'server_socket'):
-                self.server_socket.close()
-                print("✅ Server socket closed")
+            # Close OpenCV windows
+            cv2.destroyAllWindows()
+            print("✅ OpenCV windows closed")
         except Exception as e:
-            print(f"⚠️  Socket cleanup error: {e}")
+            print(f"⚠️  OpenCV cleanup error: {e}")
+        
+        try:
+            # Close Open3D visualizer
+            if self.vis_available and hasattr(self, 'vis'):
+                self.vis.destroy_window()
+                print("✅ Open3D visualizer closed")
+        except Exception as e:
+            print(f"⚠️  Open3D cleanup error: {e}")
         
         # Print final latency analysis
-        if any(len(times) > 0 for times in self.latency_tracker.values()):
-            self._print_latency_analysis()
-        
-        print(f"✅ Robust VR Point Cloud server cleanup complete")
-        print(f"📊 Served {len(self.connected_clients)} VR clients during session")
+        self._print_latency_analysis()
+        print("✅ Robust cleanup complete")
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Robust RealSense Point Cloud Streaming Server for VR")
-    parser.add_argument('--host', type=str, default='192.168.0.196', 
-                       help='Host IP address to bind the server to.')
-    parser.add_argument('--port', type=int, default=8081, 
-                       help='Port to listen on (default: 8081 to avoid conflict with video server).')
-    args = parser.parse_args()
-    
     try:
-        server = RobustPointCloudServer(args.host, args.port)
-        server.start_streaming()
+        streamer = RobustUltraFastStreamer()
+        streamer.start_streaming()
     except Exception as e:
-        print(f"❌ Failed to start VR Point Cloud server: {e}")
+        print(f"❌ Failed to start: {e}")
         print("\\n🔧 Troubleshooting:")
         print("1. Check RealSense D435 is connected via USB 3.0")
-        print("2. Install dependencies: pip install pyrealsense2 opencv-python")
-        print("3. For maximum speed: pip install numba") 
-        print("4. Make sure port 8081 is not in use")
-        print("5. Unity VR app should connect to this server for point cloud data")
+        print("2. For maximum speed: pip install numba")
+        print("3. Close other applications using the camera")
+        print("\\n💡 This version provides detailed latency profiling and robust error handling")

@@ -1,0 +1,25 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build and Deploy to Quest 3 - Video Stream Test",
+			"type": "shell",
+			"command": "\"C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.48f1\\Editor\\Unity.exe\"",
+			"args": [
+				"-projectPath",
+				".",
+				"-buildTarget",
+				"Android",
+				"-executeMethod",
+				"UnityEditor.BuildPlayer.BuildPlayer",
+				"-quit",
+				"-batchmode",
+				"-logFile",
+				"build.log"
+			],
+			"group": "build",
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

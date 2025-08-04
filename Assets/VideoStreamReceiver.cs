@@ -22,6 +22,7 @@ public class VideoStreamReceiver : MonoBehaviour
 
     void Start()
     {
+        Debug.Log($"🎬 VideoStreamReceiver starting - connecting to {serverAddress}:{serverPort}");
         receivedTexture = new Texture2D(2, 2);
         GetComponent<Renderer>().material.mainTexture = receivedTexture;
         StartConnection();
@@ -52,6 +53,7 @@ public class VideoStreamReceiver : MonoBehaviour
 
         try
         {
+            Debug.Log($"🔄 Attempting to connect to {serverAddress}:{serverPort}...");
             client = new TcpClient(serverAddress, serverPort);
             stream = client.GetStream();
             isRunning = true;
@@ -60,11 +62,12 @@ public class VideoStreamReceiver : MonoBehaviour
             receiveThread.IsBackground = true;
             receiveThread.Start();
 
-            Debug.Log("Connected to server.");
+            Debug.Log("✅ Connected to video streaming server successfully!");
         }
         catch (Exception e)
         {
-            Debug.LogError("Socket error: " + e.Message);
+            Debug.LogError($"❌ Failed to connect to video server: {e.Message}");
+            Debug.LogError($"   Make sure server is running at {serverAddress}:{serverPort}");
         }
     }
 
