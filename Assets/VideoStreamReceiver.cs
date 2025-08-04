@@ -3,15 +3,19 @@ using System.Net.Sockets;
 using System.Threading;
 using System;
 using System.IO;
+using System.Net;
 
 public class VideoStreamReceiver : MonoBehaviour
 {
     public string serverAddress = "192.168.0.196"; // Change to your PC's IP address
     public int serverPort = 8080;
+    public int pingPort = 8081; // UDP port for latency measurement
 
     private TcpClient client;
     private NetworkStream stream;
     private Thread receiveThread;
+    private UdpClient pingClient;
+    private Thread pingThread;
     private bool isRunning = false;
 
     private byte[] receivedBytes;
@@ -61,6 +65,11 @@ public class VideoStreamReceiver : MonoBehaviour
             receiveThread = new Thread(new ThreadStart(ReceiveData));
             receiveThread.IsBackground = true;
             receiveThread.Start();
+            
+            // Start the ping client thread
+            pingThread = new Thread(new ThreadStart(PingService));
+            pingThread.IsBackground = true;
+            pingThread.Start();
 
             Debug.Log("✅ Connected to video streaming server successfully!");
         }
@@ -73,20 +82,29 @@ public class VideoStreamReceiver : MonoBehaviour
 
     private void ReceiveData()
     {
+        // Simplified: Header is just 4 bytes for frame size
         byte[] sizeInfo = new byte[4];
 
         while (isRunning)
         {
             try
             {
-                int bytesRead = stream.Read(sizeInfo, 0, sizeInfo.Length);
-                if (bytesRead == 0)
+                int bytesRead = 0;
+                int totalHeaderBytesRead = 0;
+                while(totalHeaderBytesRead < sizeInfo.Length)
                 {
-                    // Connection closed
-                    break;
+                    bytesRead = stream.Read(sizeInfo, totalHeaderBytesRead, sizeInfo.Length - totalHeaderBytesRead);
+                    if (bytesRead == 0) {
+                        Debug.LogWarning("Connection closed while reading header.");
+                        isRunning = false;
+                        break;
+                    }
+                    totalHeaderBytesRead += bytesRead;
                 }
 
-                if (bytesRead == 4)
+                if (!isRunning) break;
+
+                if (totalHeaderBytesRead == 4)
                 {
                     int frameSize = BitConverter.ToInt32(sizeInfo, 0);
                     byte[] frameData = new byte[frameSize];
@@ -96,11 +114,14 @@ public class VideoStreamReceiver : MonoBehaviour
                         bytesRead = stream.Read(frameData, totalBytesRead, frameSize - totalBytesRead);
                         if (bytesRead == 0)
                         {
-                            // Connection closed
+                            Debug.LogWarning("Connection closed while reading frame data.");
+                            isRunning = false;
                             break;
                         }
                         totalBytesRead += bytesRead;
                     }
+
+                    if (!isRunning) break;
 
                     if (totalBytesRead == frameSize)
                     {
@@ -112,22 +133,71 @@ public class VideoStreamReceiver : MonoBehaviour
                     }
                 }
             }
+            catch (IOException ioex)
+            {
+                Debug.LogWarning($"Socket error in ReceiveData: {ioex.Message}");
+                break;
+            }
             catch (Exception e)
             {
-                Debug.LogError("Error receiving data: " + e.Message);
-                isRunning = false;
+                if (isRunning)
+                {
+                    Debug.LogError($"Error in ReceiveData: {e.Message}");
+                }
+                break;
             }
         }
     }
 
-    void OnApplicationQuit()
+    private void PingService()
+    {
+        try
+        {
+            pingClient = new UdpClient();
+            IPEndPoint serverEndPoint = new IPEndPoint(IPAddress.Parse(serverAddress), pingPort);
+
+            // Send an initial message to let the server know our address
+            byte[] initialMessage = new byte[] { 1 };
+            pingClient.Send(initialMessage, initialMessage.Length, serverEndPoint);
+
+            while (isRunning)
+            {
+                // Wait to receive a ping (timestamp)
+                IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
+                byte[] receivedData = pingClient.Receive(ref remoteEP);
+
+                // Immediately send it back
+                pingClient.Send(receivedData, receivedData.Length, serverEndPoint);
+            }
+        }
+        catch (Exception e)
+        {
+            if(isRunning)
+            {
+                Debug.LogError($"Ping service error: {e.Message}");
+            }
+        }
+        finally
+        {
+            if(pingClient != null)
+            {
+                pingClient.Close();
+            }
+        }
+    }
+
+    void OnDestroy()
     {
         if (isRunning)
         {
             isRunning = false;
-            receiveThread.Join();
-            stream.Close();
-            client.Close();
+            
+            if (receiveThread != null) receiveThread.Join();
+            if (pingThread != null) pingThread.Abort(); // Abort is okay for the ping thread
+
+            if (stream != null) stream.Close();
+            if (client != null) client.Close();
+            if (pingClient != null) pingClient.Close();
         }
     }
 }
