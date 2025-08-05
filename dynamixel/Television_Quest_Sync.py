@@ -133,36 +133,44 @@ def main():
                 )
                 
                 # --- Only send command if it has changed enough ---
-                if np.linalg.norm(final_command - last_sent_command) > MIN_COMMAND_CHANGE:
-                    try:
-                        robot.command_joint_state(final_command)
-                        last_sent_command = final_command
+                # if np.linalg.norm(final_command - last_sent_command) > MIN_COMMAND_CHANGE:
+                #     try:
+                #         robot.command_joint_state(final_command)
+                #         last_sent_command = final_command
                         
-                        # Read actual robot position after command
-                        time.sleep(0.05)  # Small delay to let robot respond
-                        actual_pos = robot.get_joint_state()
+                #         # Read actual robot position after command
+                #         time.sleep(0.005)  # Small delay to let robot respond
+                #         actual_pos = robot.get_joint_state()
                         
-                        if actual_pos is not None:
-                            target_deg = np.rad2deg(final_command).round(1)
-                            actual_deg = np.rad2deg(actual_pos).round(1)
-                            print(f"Yaw: {yaw_offset_deg:+.1f}° | Pitch: {pitch_offset_deg:+.1f}° | Target: {target_deg} | Actual: {actual_deg}")
+                #         if actual_pos is not None:
+                #             target_deg = np.rad2deg(final_command).round(1)
+                #             actual_deg = np.rad2deg(actual_pos).round(1)
+                #             print(f"Yaw: {yaw_offset_deg:+.1f}° | Pitch: {pitch_offset_deg:+.1f}° | Target: {target_deg} | Actual: {actual_deg}")
                             
-                            # Check if robot actually moved
-                            position_diff = np.linalg.norm(actual_pos - robot_zero_pos)
-                            if position_diff < 0.01:  # Less than ~0.6 degrees total movement
-                                print("⚠️  Robot not moving! Check:")
-                                print("   - Power supply to motors")
-                                print("   - Motor torque enable")
-                                print("   - Cable connections")
-                        else:
-                            print(f"Yaw: {yaw_offset_deg:+.1f}° | Pitch: {pitch_offset_deg:+.1f}° | Command Sent | ❌ Can't read position")
+                #             # Check if robot actually moved
+                #             position_diff = np.linalg.norm(actual_pos - robot_zero_pos)
+                #             if position_diff < 0.01:  # Less than ~0.6 degrees total movement
+                #                 print("⚠️  Robot not moving! Check:")
+                #                 print("   - Power supply to motors")
+                #                 print("   - Motor torque enable")
+                #                 print("   - Cable connections")
+                #         else:
+                #             print(f"Yaw: {yaw_offset_deg:+.1f}° | Pitch: {pitch_offset_deg:+.1f}° | Command Sent | ❌ Can't read position")
                             
-                    except Exception as e:
-                        print(f"⚠️ Error sending command to robot: {e}")
-                else:
-                    # Uncomment this line if you want to see when commands are skipped due to small changes
-                    # print(f"Yaw: {yaw_offset_deg:+.1f} deg | Pitch: {pitch_offset_deg:+.1f} deg | Change too small")
-                    pass
+                #     except Exception as e:
+                #         print(f"⚠️ Error sending command to robot: {e}")
+                try:
+                    # Use the new RTT method
+                    actual_pos, hardware_rtt_ms = robot.command_and_get_rtt(final_command)
+                    last_sent_command = final_command
+                    
+                    if actual_pos is not None:
+                        print(f"Yaw: {yaw_offset_deg:+.1f}° | Pitch: {pitch_offset_deg:+.1f}° | Latency: {hardware_rtt_ms:5.1f} ms")
+                    else:
+                        print("Command Sent | ❌ Can't read position")
+                        
+                except Exception as e:
+                    print(f"⚠️ Error sending command to robot: {e}")
 
             elif time.time() - last_command_time > STALE_DATA_TIMEOUT:
                 print("🕒 Stale data, returning robot to zero...")
@@ -170,7 +178,7 @@ def main():
                 last_sent_command = robot_zero_pos.copy()
                 last_command_time = time.time() # Reset timer to avoid repeated messages
 
-            time.sleep(0.01)
+            time.sleep(0.005)
 
     except KeyboardInterrupt:
         print("\nExiting.")

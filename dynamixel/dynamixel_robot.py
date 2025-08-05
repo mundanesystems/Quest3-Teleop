@@ -9,6 +9,7 @@ from typing import Dict, Optional, Sequence
 import numpy as np
 from robot import Robot
 from driver import DynamixelDriver, DynamixelDriverProtocol, FakeDynamixelDriver
+import time
 
 def wrap_to_pi(radians_array: np.ndarray) -> np.ndarray:
     """Wraps an angle in radians to the range [-pi, pi]."""
@@ -68,6 +69,19 @@ class DynamixelRobot(Robot):
         set_value = (joint_state * self._joint_signs) + self._joint_offsets
         set_value = wrap_to_pi(set_value)
         self._driver.set_joints(set_value)
+
+    def command_and_get_rtt(self, joint_state: np.ndarray):
+        """
+        Sends a command and then immediately reads the robot's state,
+        measuring the round-trip time for the hardware communication.
+        """
+        start_time = time.perf_counter()
+        self.command_joint_state(joint_state)
+        actual_pos = self.get_joint_state()
+        end_time = time.perf_counter()
+        
+        rtt_ms = (end_time - start_time) * 1000
+        return actual_pos, rtt_ms
 
     def set_torque_mode(self, mode: bool):
         if mode == self._torque_on:
