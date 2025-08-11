@@ -17,8 +17,13 @@ PITCH_SENSITIVITY = -1.0
 
 # --- Joint Limits (in radians) ---
 LR_LIMITS_RAD = (-2.9, 2.9)
-ID1_LIMITS_RAD = (-2.86, -0.31)
-ID3_LIMITS_RAD = (0.37, 2.91)
+# # Limits for RealSense Camera
+# ID1_LIMITS_RAD = (-2.86, -0.31)
+# ID3_LIMITS_RAD = (0.37, 2.91)
+
+# Limits for the Zed2i Camera
+ID1_LIMITS_RAD = (-2.24, -1.01)
+ID3_LIMITS_RAD = (0.98, 2.16)
 
 # --- Robustness Settings ---
 STALE_DATA_TIMEOUT = 1.0  # Seconds before data is considered stale

@@ -15,11 +15,15 @@ UD_STEP_SIZE = 0.3  # Up/Down step size in radians
 # Limits for Left/Right motion (Joint ID 2, index 0)
 LR_LIMITS_RAD = (-3.14 + LR_STEP_SIZE, 3.14 - LR_STEP_SIZE)
 
-# Limits for Motor ID 1 (index 1)
-ID1_LIMITS_RAD = (-2.86, -0.31)
+# # Limits for Motor ID 1 (index 1) (RealSense Camera)
+# ID1_LIMITS_RAD = (-2.86, -0.31)
 
-# Limits for Motor ID 3 (index 2)
-ID3_LIMITS_RAD = (0.37, 2.91)
+# # Limits for Motor ID 3 (index 2) (RealSense Camera)
+# ID3_LIMITS_RAD = (0.37, 2.91)
+
+# Limits for the Zed2i Camera
+ID1_LIMITS_RAD = (-2.24, -1.01)
+ID3_LIMITS_RAD = (0.98, 2.16)
 
 
 def main():
