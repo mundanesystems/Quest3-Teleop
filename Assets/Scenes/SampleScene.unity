@@ -1768,7 +1768,7 @@ GameObject:
   - component: {fileID: 1114040583}
   - component: {fileID: 1114040582}
   m_Layer: 0
-  m_Name: PanoramaQuad
+  m_Name: TCPReceiver
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1803,9 +1803,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   serverAddress: 192.168.0.196
   serverPort: 8080
-  pingPort: 8081
-  imageWidth: 2560
-  imageHeight: 720
 --- !u!64 &1114040583
 MeshCollider:
   m_ObjectHideFlags: 0
@@ -1848,7 +1845,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 9dfc825aed78fcd4ba02077103263b40, type: 2}
+  - {fileID: 2100000, guid: d424e8ce8623ab84d924a6411a8e8a25, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
