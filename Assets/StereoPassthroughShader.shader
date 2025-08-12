@@ -41,8 +41,6 @@ Shader "Unlit/StereoPassthroughShader"
             fixed4 frag (v2f i) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
                 float2 stereoUV = i.uv;
-                // Invert the V (vertical) coordinate to flip the image upright
-                stereoUV.y = 1.0 - stereoUV.y;
                 if (unity_StereoEyeIndex == 0) { stereoUV.x = stereoUV.x * 0.5; } // Left Eye
                 else { stereoUV.x = (stereoUV.x * 0.5) + 0.5; } // Right Eye
                 return tex2D(_MainTex, stereoUV);

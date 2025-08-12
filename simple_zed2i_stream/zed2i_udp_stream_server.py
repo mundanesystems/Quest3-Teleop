@@ -7,10 +7,11 @@ import struct
 
 # CONFIGURATION
 LISTEN_IP = '0.0.0.0'
-TCP_PORT = 8080
+UDP_PORT = 8080
 RESOLUTION = sl.RESOLUTION.HD720
-FPS = 60 
-JPEG_QUALITY = 85
+FPS = 60 # A more reasonable target for UDP streaming
+JPEG_QUALITY = 60 # Lower quality = smaller packets = less chance of loss
+CHUNK_SIZE = 60000 # 60 KB, safely below the 64KB UDP limit
 
 def main():
     print("Initializing ZED camera...")
@@ -23,30 +24,21 @@ def main():
         print('❌ Failed to open ZED camera!')
         exit(1)
 
-    # --- Get Camera FOV for 1-to-1 scaling ---
-    cam_info = zed.get_camera_information()
-    calib_params = cam_info.camera_configuration.calibration_parameters
-    h_fov = calib_params.left_cam.h_fov
-    v_fov = calib_params.left_cam.v_fov
-    fov_message = f"{h_fov},{v_fov}".encode('utf-8')
-    fov_header = len(fov_message).to_bytes(4, 'little')
+    # --- Create UDP Socket ---
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((LISTEN_IP, UDP_PORT))
+    print(f"📹 UDP Server listening at {LISTEN_IP}:{UDP_PORT}")
 
-    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_sock.bind((LISTEN_IP, TCP_PORT))
-    server_sock.listen(1)
-    print(f"📹 Passthrough Server listening at {LISTEN_IP}:{TCP_PORT}")
-
-    conn, addr = server_sock.accept()
-    print(f'✅ Client connected from {addr}')
-
-    print(f"Sending FOV data: HFOV={h_fov}, VFOV={v_fov}")
-    conn.sendall(fov_header + fov_message)
+    # --- Handshake: Wait for a ping from the client to get its address ---
+    print("Waiting for a ping from the client...")
+    data, client_address = sock.recvfrom(1024)
+    print(f"✅ Client connected from {client_address}")
 
     try:
         left_image, right_image = sl.Mat(), sl.Mat()
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
-        
+        frame_id = 0
+
         # Latency check variables
         frame_count = 0
         LOG_INTERVAL = 60 # Print a report every 60 frames
@@ -56,36 +48,41 @@ def main():
         fps_frame_count = 0
 
         while True:
-            # --- Start latency timer for the frame ---
             t0 = time.perf_counter()
-
             if zed.grab() == sl.ERROR_CODE.SUCCESS:
-                t1 = time.perf_counter() # Time after grab
+                t1 = time.perf_counter() # time after grab
 
                 zed.retrieve_image(left_image, sl.VIEW.LEFT)
                 zed.retrieve_image(right_image, sl.VIEW.RIGHT)
-                
-                t2 = time.perf_counter() # Time after retrieve (usually negligible)
+                t2 = time.perf_counter() # time after retrieve
 
                 sbs_image = np.concatenate((left_image.get_data(), right_image.get_data()), axis=1)
-
-                t3 = time.perf_counter() # Time after stitch
+                t3 = time.perf_counter() # time after stitch
 
                 result, frame_jpeg = cv2.imencode('.jpg', sbs_image, encode_param)
                 if not result: continue
-
-                t4 = time.perf_counter() # Time after encode
-
-                timestamp = time.time()
-                # Pack the timestamp into 8 bytes (a 'double')
-                timestamp_bytes = struct.pack('<d', timestamp)
+                t4 = time.perf_counter() # time after encode
 
                 frame_data = frame_jpeg.tobytes()
-                size_header = len(frame_data).to_bytes(4, 'little')
-                conn.sendall(timestamp_bytes + size_header + frame_data)
+                total_size = len(frame_data)
+                num_chunks = (total_size + CHUNK_SIZE - 1) // CHUNK_SIZE
                 
-                t5 = time.perf_counter() # Time after send
+                # --- Send the frame in chunks ---
+                for i in range(num_chunks):
+                    t5 = time.perf_counter() # time before send
+                    start = i * CHUNK_SIZE
+                    end = start + CHUNK_SIZE
+                    chunk = frame_data[start:end]
+                    
+                    # Create a header: [frame_id (4 bytes), chunk_index (1 byte), total_chunks (1 byte)]
+                    header = struct.pack('<IBB', frame_id, i, num_chunks)
+                    
+                    # Send header + chunk data
+                    sock.sendto(header + chunk, client_address)
+                    t6 = time.perf_counter() # time after send chunk
+                t7 = time.perf_counter() # time after send
 
+                frame_id = (frame_id + 1) % 4294967295 # Loop frame_id
                 # --- Log latency values periodically ---
                 frame_count += 1
                 fps_frame_count += 1
@@ -96,16 +93,20 @@ def main():
                     fps = fps_frame_count / (fps_end_time - fps_start_time)
                     
                     grab_latency = (t1 - t0) * 1000
+                    retrieve_latency = (t2 - t1) * 1000
                     stitch_latency = (t3 - t2) * 1000
                     encode_latency = (t4 - t3) * 1000
-                    send_latency = (t5 - t4) * 1000
-                    total_latency = (t5 - t0) * 1000
+                    chunk_send_latency = (t6 - t5) * 1000
+                    send_latency = (t7 - t4) * 1000
+                    total_latency = (t7 - t0) * 1000
 
                     print("--- Server Performance Report ---")
                     print(f"  FPS        : {fps:.1f}")
                     print(f"  Grab       : {grab_latency:.2f} ms")
+                    print(f" Retrieve   : {retrieve_latency:.2f} ms")
                     print(f"  Stitching  : {stitch_latency:.2f} ms")
                     print(f"  JPEG Encode: {encode_latency:.2f} ms")
+                    print(f"  Chunk Send : {chunk_send_latency:.2f} ms")
                     print(f"  Send       : {send_latency:.2f} ms")
                     print(f"  ---------------------------")
                     print(f"  Total Server : {total_latency:.2f} ms\n")
@@ -113,13 +114,12 @@ def main():
                     # Reset FPS tracking
                     fps_start_time = time.perf_counter()
                     fps_frame_count = 0
-
-    except (ConnectionResetError, BrokenPipeError):
-        print('❌ Client disconnected.')
+                
+    except KeyboardInterrupt:
+        print('\n🛑 Streaming stopped by user.')
     finally:
         print("Cleaning up...")
-        conn.close()
-        server_sock.close()
+        sock.close()
         zed.close()
 
 if __name__ == "__main__":
