@@ -1,99 +1,52 @@
-# MundaneNeck - Quest 3 Gyroscope & RealSense Integration
+# Quest3-Teleop
 
-A Unity VR project that integrates Meta Quest 3 gyroscope data with Intel RealSense D435 camera streaming and Dynamixel robot control.
+This project enables real-time streaming of video from a ZED 2i stereo camera to a Meta Quest 3 VR headset. The ZED 2i camera is mounted on a two-degree-of-freedom (2-DOF) robotic neck, which is controlled based on gyroscope sensor readings from the Quest 3 headset. This setup allows the camera to mimic the user's head movements, providing an immersive teleoperation experience.
 
-## 🎯 Features
+## Features
+- Real-time video streaming from ZED 2i stereo camera to Quest 3
+- 2-DOF robotic neck for camera movement
+- Head tracking using Quest 3 gyroscope data
+- Unity project for VR rendering and control
+- Python scripts for camera and robot control
 
-- **Quest 3 Gyroscope Tracking**: Real-time head movement tracking
-- **RealSense Camera Streaming**: Live video and point cloud streaming
-- **Robot Control**: Dynamixel servo control based on head movements
-- **VR Integration**: Full Unity VR experience with Oculus SDK
+## Project Structure
+- `Assets/` - Unity project files
+- `dynamixel/` - Python scripts for controlling the neck and camera streaming
+- `start_camera_stream.bat` - Batch file to start the camera stream
 
-## 🚀 Components
-
-### Unity Project (`Assets/`)
-- `GyroscopeReader.cs` - Captures Quest 3 gyroscope data and sends via UDP
-- `VideoStreamReceiver.cs` - Receives video stream from RealSense camera
-- `PointCloudReceiver.cs` - Receives and renders 3D point cloud data
-- `EfficientPointCloudReceiver.cs` - Optimized point cloud rendering
-
-### Python Scripts (`dynamixel/`)
-- `Television_Quest_Sync.py` - Main robot control script
-- `dynamixel_robot.py` - Robot interface and control
-- `driver.py` - Low-level Dynamixel communication
-- `test_udp_listener.py` - Network debugging utility
-
-### RealSense Streaming (`simple_realsense_demo/`)
-- `realsense_stream_server.py` - Basic video streaming server
-- `realsense_pointcloud_server.py` - 3D point cloud streaming server
-- `simple_realsense_streaming_robust.py` - High-performance streaming with profiling
-
-## 🔧 Setup
-
-### Requirements
+## Requirements
 - Meta Quest 3 VR headset
-- Intel RealSense D435 camera
-- Dynamixel servo motors
-- Unity 2022.3+ with Oculus SDK
-- Python 3.8+ with dependencies
+- ZED 2i stereo camera
+- 2-DOF robotic neck (Dynamixel motors recommended)
+- Windows PC
+- Unity 2022.3.48f1
+- Python 3.x
+- ZED SDK
+- Required Python packages (see `requirements.txt` if available)
 
-### Python Dependencies
-```bash
-pip install pyrealsense2 opencv-python open3d numpy numba
-```
-
-### Network Configuration
-- Ensure Quest 3 and PC are on the same Wi-Fi network
-- Default IP: `192.168.0.196` (update in Unity scripts if different)
-- Ports: `8080` (video), `8081` (point cloud), `9050` (gyroscope)
-
-## 🎮 Usage
-
-1. **Start Robot Control**:
-   ```bash
-   cd dynamixel
-   python Television_Quest_Sync.py
+## Setup
+1. Clone this repository.
+2. Set up the ZED 2i camera and install the ZED SDK.
+3. Connect the 2-DOF neck to your PC and ensure Dynamixel drivers are installed.
+4. Install Python dependencies:
    ```
-
-2. **Start Camera Streaming**:
-   ```bash
-   cd simple_realsense_demo
-   python realsense_stream_server.py
-   # or for point clouds:
-   python realsense_pointcloud_server.py
+   pip install -r requirements.txt
    ```
+5. Open the Unity project in Unity Hub (version 2022.3.48f1).
+6. Build and deploy the Unity project to the Quest 3 headset.
+7. Run the camera streaming script:
+   ```
+   ./start_camera_stream.bat
+   ```
+8. Put on the Quest 3 headset and start the app.
 
-3. **Deploy Unity App** to Quest 3 and run
+## Usage
+- Move your head while wearing the Quest 3. The ZED 2i camera will follow your head movements, and the video feed will be streamed to your headset in real time.
 
-## 🔗 System Architecture
+## License
+MIT License
 
-```
-Quest 3 ──UDP──→ PC ──Serial──→ Dynamixel Robot
-   ↓                ↓
-Unity VR ←──TCP──→ RealSense Camera
-```
-
-- Quest 3 sends gyroscope data to PC via UDP
-- PC processes data and controls robot servos
-- RealSense camera streams video/point clouds to Unity
-- Unity displays immersive view with robot control
-
-## 📊 Performance
-
-- **Video Streaming**: 30 FPS @ 640x480
-- **Point Cloud**: 15,000+ points @ 30 FPS
-- **Gyroscope**: 20 Hz update rate
-- **Robot Control**: Real-time servo positioning
-
-## 🛠️ Development
-
-Built with:
-- Unity 2022.3 LTS
-- Oculus Integration SDK
-- Intel RealSense SDK 2.0
-- Dynamixel SDK
-- Python 3.8+
-
-## 📝 License
-
-This project is part of the MundaneNeck system for VR-controlled robotics.
+## Acknowledgments
+- Stereolabs ZED SDK
+- Meta Quest 3
+- Dynamixel motors
