@@ -88,12 +88,11 @@ public class PassthroughUDPReceiver : MonoBehaviour
                     
                     lock (dataLock)
                     {
-                        // Add the completed frame to the queue instead of a single variable.
-                        // We cap the queue at 2 to prevent latency from building up.
-                        if (frameQueue.Count < 2) 
-                        {
-                            frameQueue.Enqueue(fullFrameData);
+                        // Overwrite old frames, keep only the latest.
+                        if (frameQueue.Count > 0) {
+                            frameQueue.Clear(); // Discard any old frame waiting in the queue
                         }
+                        frameQueue.Enqueue(fullFrameData); // Add the newest one
                     }
                     
                     lastCompletedFrameId = frameId;

@@ -10,7 +10,7 @@ LISTEN_IP = '0.0.0.0'
 UDP_PORT = 8080
 RESOLUTION = sl.RESOLUTION.HD720
 FPS = 60 # A more reasonable target for UDP streaming
-JPEG_QUALITY = 60 # Lower quality = smaller packets = less chance of loss
+JPEG_QUALITY = 90 # Lower quality = smaller packets = less chance of loss
 CHUNK_SIZE = 60000 # 60 KB, safely below the 64KB UDP limit
 
 def main():
