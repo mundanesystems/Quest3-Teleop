@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ZED2i Stereo WebRTC Latency Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .metric {
+            background: rgba(0,0,0,0.7);
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin: 4px;
+            display: inline-block;
+        }
+        .stereo-container {
+            position: relative;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .stereo-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .eye-label {
+            position: absolute;
+            top: 10px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .left-eye {
+            left: 20px;
+            color: #00ff00;
+        }
+        .right-eye {
+            right: 20px;
+            color: #ff0000;
+        }
+        .center-line {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: rgba(255,255,255,0.3);
+            transform: translateX(-50%);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-7xl bg-gray-800 rounded-lg shadow-lg p-6">
+        <h1 class="text-3xl font-bold mb-4 text-center text-cyan-400">ZED2i Stereo WebRTC Stream</h1>
+        
+        <div class="mb-4">
+            <label for="serverIp" class="block text-sm font-medium text-gray-300 mb-1">Server IP Address:</label>
+            <input type="text" id="serverIp" class="w-full bg-gray-700 border border-gray-600 text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:outline-none" value="192.168.0.196:8080">
+        </div>
+
+        <div class="flex justify-center space-x-4 mb-4">
+            <button id="startButton" class="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-6 rounded-lg transition-colors duration-300">Start Stereo Stream</button>
+            <button id="stopButton" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg transition-colors duration-300" disabled>Stop Stream</button>
+        </div>
+        
+        <div id="status" class="text-center text-gray-400 mb-4 h-6"></div>
+
+        <!-- Metrics Display -->
+        <div class="mb-4 text-center">
+            <div class="metric">
+                <span class="text-cyan-400">Client FPS:</span> <span id="clientFps">0</span>
+            </div>
+            <div class="metric">
+                <span class="text-green-400">Frame Delay:</span> <span id="frameDelay">0ms</span>
+            </div>
+            <div class="metric">
+                <span class="text-yellow-400">Network RTT:</span> <span id="networkRtt">0ms</span>
+            </div>
+            <div class="metric">
+                <span class="text-purple-400">Jitter:</span> <span id="jitter">0ms</span>
+            </div>
+            <div class="metric">
+                <span class="text-red-400">Packets Lost:</span> <span id="packetsLost">0</span>
+            </div>
+            <div class="metric">
+                <span class="text-orange-400">Resolution:</span> <span id="resolution">0x0</span>
+            </div>
+        </div>
+
+        <!-- Stereo Video container -->
+        <div class="stereo-container w-full border-2 border-gray-700">
+            <video id="video" autoplay playsinline class="w-full h-auto" style="max-height: 70vh;"></video>
+            
+            <!-- Stereo overlay -->
+            <div class="stereo-overlay">
+                <div class="eye-label left-eye">LEFT EYE</div>
+                <div class="eye-label right-eye">RIGHT EYE</div>
+                <div class="center-line"></div>
+                
+                <!-- Performance overlay -->
+                <div class="absolute bottom-4 right-4 bg-black bg-opacity-75 p-2 rounded text-sm">
+                    <div>ZED2i Stereo Stream</div>
+                    <div>Client Time: <span id="clientTime">0.000</span></div>
+                    <div>Render Time: <span id="renderTime">0.000</span></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Instructions -->
+        <div class="mt-4 text-center text-gray-400 text-sm">
+            <p>📡 Displaying ZED2i stereo camera feed side-by-side at 60fps</p>
+            <p>🥽 For VR viewing: Left eye = Left half, Right eye = Right half</p>
+        </div>
+    </div>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const video = document.getElementById('video');
+        const serverIpInput = document.getElementById('serverIp');
+        const statusDiv = document.getElementById('status');
+        
+        // Metric elements
+        const clientFpsEl = document.getElementById('clientFps');
+        const frameDelayEl = document.getElementById('frameDelay');
+        const networkRttEl = document.getElementById('networkRtt');
+        const jitterEl = document.getElementById('jitter');
+        const packetsLostEl = document.getElementById('packetsLost');
+        const resolutionEl = document.getElementById('resolution');
+        const clientTimeEl = document.getElementById('clientTime');
+        const renderTimeEl = document.getElementById('renderTime');
+        
+        let pc = null;
+        let startTime = null;
+        let frameCount = 0;
+        let lastFrameTime = 0;
+        let frameTimes = [];
+        let statsInterval = null;
+
+        function updateClientTime() {
+            const now = Date.now() / 1000;
+            clientTimeEl.textContent = now.toFixed(3);
+            renderTimeEl.textContent = (performance.now() / 1000).toFixed(3);
+        }
+
+        function calculateMetrics() {
+            const now = performance.now();
+            if (startTime) {
+                const elapsed = (now - startTime) / 1000;
+                const fps = frameCount / elapsed;
+                clientFpsEl.textContent = fps.toFixed(1);
+            }
+            
+            // Update resolution display
+            if (video.videoWidth > 0) {
+                resolutionEl.textContent = `${video.videoWidth}x${video.videoHeight}`;
+            }
+            
+            // Calculate jitter from frame times
+            if (frameTimes.length > 10) {
+                const deltas = [];
+                for (let i = 1; i < frameTimes.length; i++) {
+                    deltas.push(frameTimes[i] - frameTimes[i-1]);
+                }
+                const avgDelta = deltas.reduce((a, b) => a + b, 0) / deltas.length;
+                const variance = deltas.reduce((acc, delta) => acc + Math.pow(delta - avgDelta, 2), 0) / deltas.length;
+                const jitterMs = Math.sqrt(variance);
+                jitterEl.textContent = jitterMs.toFixed(1) + 'ms';
+            }
+        }
+
+        async function getWebRTCStats() {
+            if (!pc) return;
+            
+            try {
+                const stats = await pc.getStats();
+                let inboundStats = null;
+                
+                stats.forEach(report => {
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                        inboundStats = report;
+                    }
+                });
+                
+                if (inboundStats) {
+                    // Update network metrics
+                    if (inboundStats.packetsLost !== undefined) {
+                        packetsLostEl.textContent = inboundStats.packetsLost;
+                    }
+                    
+                    // Frame delay (decode time)
+                    if (inboundStats.totalDecodeTime && inboundStats.framesDecoded) {
+                        const avgDecodeTime = (inboundStats.totalDecodeTime / inboundStats.framesDecoded) * 1000;
+                        frameDelayEl.textContent = avgDecodeTime.toFixed(1) + 'ms';
+                    }
+                }
+                
+                // Get RTT from candidate pairs
+                stats.forEach(report => {
+                    if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                        if (report.currentRoundTripTime !== undefined) {
+                            networkRttEl.textContent = (report.currentRoundTripTime * 1000).toFixed(1) + 'ms';
+                        }
+                    }
+                });
+                
+            } catch (e) {
+                console.error('Error getting WebRTC stats:', e);
+            }
+        }
+
+        function createPeerConnection() {
+            const config = {
+                sdpSemantics: 'unified-plan'
+            };
+            const pc = new RTCPeerConnection(config);
+
+            // Connect video track to video element
+            pc.addEventListener('track', function (evt) {
+                if (evt.track.kind == 'video') {
+                    video.srcObject = evt.streams[0];
+                    
+                    // Track frame rendering
+                    video.addEventListener('loadeddata', () => {
+                        startTime = performance.now();
+                        frameCount = 0;
+                        frameTimes = [];
+                        console.log('📹 Stereo video loaded:', video.videoWidth + 'x' + video.videoHeight);
+                    });
+                    
+                    // Monitor video frame updates
+                    const trackFrames = () => {
+                        if (video.videoWidth > 0) {
+                            frameCount++;
+                            const now = performance.now();
+                            frameTimes.push(now);
+                            
+                            // Keep only last 60 frame times for jitter calculation
+                            if (frameTimes.length > 60) {
+                                frameTimes.shift();
+                            }
+                            
+                            calculateMetrics();
+                        }
+                        if (!video.paused && !video.ended) {
+                            requestAnimationFrame(trackFrames);
+                        }
+                    };
+                    
+                    video.addEventListener('play', () => {
+                        requestAnimationFrame(trackFrames);
+                    });
+                }
+            });
+
+            pc.onconnectionstatechange = () => {
+                statusDiv.textContent = `Connection state: ${pc.connectionState}`;
+                if (pc.connectionState === 'connected') {
+                    startButton.disabled = true;
+                    stopButton.disabled = false;
+                    serverIpInput.disabled = true;
+                    
+                    // Start stats collection
+                    statsInterval = setInterval(getWebRTCStats, 1000);
+                } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                    stop();
+                }
+            };
+            
+            return pc;
+        }
+
+        async function start() {
+            pc = createPeerConnection();
+            
+            pc.addTransceiver('video', { direction: 'recvonly' });
+
+            try {
+                statusDiv.textContent = 'Creating offer...';
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                const serverAddress = serverIpInput.value;
+                if (!serverAddress) {
+                    alert('Please enter the server IP address.');
+                    return;
+                }
+                
+                // Handle both "IP:PORT" and "IP" formats
+                const url = serverAddress.includes(':') ? 
+                    `http://${serverAddress}/offer` : 
+                    `http://${serverAddress}:8080/offer`;
+
+                statusDiv.textContent = 'Connecting to ZED2i stereo stream...';
+                const response = await fetch(url, {
+                    body: JSON.stringify({
+                        sdp: pc.localDescription.sdp,
+                        type: pc.localDescription.type,
+                    }),
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server responded with ${response.status}`);
+                }
+
+                const answer = await response.json();
+                statusDiv.textContent = 'Received answer, starting stereo stream...';
+                await pc.setRemoteDescription(answer);
+
+            } catch (e) {
+                console.error(e);
+                statusDiv.textContent = `Failed to connect: ${e.message}`;
+                stop();
+            }
+        }
+
+        function stop() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            if (statsInterval) {
+                clearInterval(statsInterval);
+                statsInterval = null;
+            }
+            video.srcObject = null;
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            serverIpInput.disabled = false;
+            if (statusDiv.textContent.startsWith('Connection state:')) {
+                 statusDiv.textContent = 'Disconnected';
+            }
+            
+            // Reset metrics
+            clientFpsEl.textContent = '0';
+            frameDelayEl.textContent = '0ms';
+            networkRttEl.textContent = '0ms';
+            jitterEl.textContent = '0ms';
+            packetsLostEl.textContent = '0';
+            resolutionEl.textContent = '0x0';
+        }
+
+        startButton.addEventListener('click', start);
+        stopButton.addEventListener('click', stop);
+        
+        // Update client time every 100ms
+        setInterval(updateClientTime, 100);
+
+    </script>
+</body>
+</html>
