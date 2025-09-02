@@ -219,6 +219,7 @@ class ZED2iOpenCVStreamer:
                     
                     # Performance tracking
                     self.frame_count += 1
+                    
                     self.fps_frame_count += 1
                     
                     # Log performance every 60 frames
